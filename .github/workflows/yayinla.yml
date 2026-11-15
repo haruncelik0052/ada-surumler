@@ -1,0 +1,40 @@
+# Gizli derleme hattından gelen imzalı dosyaları Release'e çevirir. Kaynak kod bu depoya hiç girmez.
+name: Yayınla
+
+on:
+  push:
+    branches: ["gelen/**"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: yayinla-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  yayinla:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ github.ref }}", fetch-depth: 1 }
+      - name: Denetle ve yayınla
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DAL: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          etiket=$(head -1 yayin/etiket.txt | tr -d '\r\n'); baslik=$(head -1 yayin/baslik.txt | tr -d '\r\n')
+          echo "$etiket" | grep -Eq '^[a-z0-9]+-k[0-9]{1,9}$' || { echo "::error::Geçersiz etiket"; exit 1; }
+          [ "$DAL" = "gelen/$etiket" ] || { echo "::error::Dal adı etiketle uyuşmuyor"; exit 1; }
+          for f in yayin/*; do
+            case "$(basename "$f")" in *.apk|*.adaguncelleme|SHA256SUMS.txt|notlar.md|etiket.txt|baslik.txt) ;; *) echo "::error::İzinsiz dosya: $f"; exit 1 ;; esac
+          done
+          # Dalda yayin/ dışında dosya olmamalı (kaynak kod girmesin)
+          [ -z "$(git ls-files | grep -v '^yayin/')" ] || { echo "::error::yayin/ dışında dosya var"; exit 1; }
+          (cd yayin && sha256sum -c SHA256SUMS.txt)
+          gh release create "$etiket" yayin/*.apk yayin/*.adaguncelleme yayin/SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target main --title "$baslik" --notes-file yayin/notlar.md
+          git push origin --delete "$DAL"
+          echo "Yayınlandı: $etiket"
